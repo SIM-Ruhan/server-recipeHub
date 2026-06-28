@@ -47,6 +47,8 @@ const result = await cursor.toArray();
 res.send(result);
 })
 
+
+
 app.post("/api/recipes", async (req,res)=> {
     const recipe = req.body;
     const result = await recipeCollection.insertOne(recipe);
