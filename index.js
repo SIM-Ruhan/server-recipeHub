@@ -6,7 +6,7 @@ require("dotenv").config()
 app.use(cors());
 app.use(express.json());
 
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 app.get('/', (req, res) => {
   res.send('Hello World!')
 })
@@ -47,7 +47,14 @@ const result = await cursor.toArray();
 res.send(result);
 })
 
-
+app.get("/api/recipes/:id", async (req,res) => {
+    const id = req.params.id;
+    const query = {
+        _id: new ObjectId(id)
+    }
+    const result = await recipeCollection.findOne(query);
+    res.send(result);
+})
 
 app.post("/api/recipes", async (req,res)=> {
     const recipe = req.body;
