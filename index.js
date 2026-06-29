@@ -80,7 +80,7 @@
 //   console.log(`Example app listening on port ${port}`)
 // })
 
-
+//-------------------------------------------------------------------------------------------
 
 const express = require('express');
 const cors = require("cors");
@@ -97,7 +97,6 @@ app.get('/', (req, res) => {
   res.send('Hello World!');
 });
 
-// ✅ Plan limits defined on the server — never trust the client for this
 const PLAN_LIMITS = {
   free: 2,
   starter: 10,
@@ -126,8 +125,8 @@ async function run() {
     app.get("/api/recipes", async (req, res) => {
       const query = {};
       if (req.query.companyId) query.companyId = req.query.companyId;
-      if (req.query.status) query.status = req.query.status;
-      if (req.query.authorId) query.authorId = req.query.authorId; // ✅ added authorId filter
+      if (req.query.status)    query.status    = req.query.status;
+      if (req.query.authorId)  query.authorId  = req.query.authorId;
 
       const cursor = recipeCollection.find(query);
       const result = await cursor.toArray();
@@ -142,36 +141,47 @@ async function run() {
       res.send(result);
     });
 
-    // ✅ GET recipe count by authorId (used by frontend to show usage)
+    // GET recipe count by authorId
+    // ⚠️ Must be defined BEFORE /api/recipes/:id to avoid "count" being treated as an ObjectId
     app.get("/api/recipes/count/:authorId", async (req, res) => {
       const { authorId } = req.params;
       const count = await recipeCollection.countDocuments({ authorId });
       res.send({ count });
     });
 
-    // ✅ POST create recipe — with plan limit enforcement
+    // POST create recipe — with plan limit enforcement
     app.post("/api/recipes", async (req, res) => {
       const { userPlan, ...recipeData } = req.body;
-
       const authorId = recipeData.authorId;
 
-      // 1. Identify the plan and its limit
-      const plan = (userPlan || "free").toLowerCase();
-      const limit = PLAN_LIMITS[plan] ?? PLAN_LIMITS["free"];
+      // Reject anonymous users
+      if (!authorId || authorId === "anonymous") {
+        return res.status(401).send({
+          success: false,
+          message: "You must be logged in to create a recipe.",
+        });
+      }
 
-      // 2. Count how many recipes this user already has
+      // Resolve plan safely — unknown plans fall back to free
+      const plan = (userPlan || "free").toLowerCase();
+      const limit = Object.prototype.hasOwnProperty.call(PLAN_LIMITS, plan)
+        ? PLAN_LIMITS[plan]
+        : PLAN_LIMITS["free"];
+
+      // Count existing recipes for this user
       const existingCount = await recipeCollection.countDocuments({ authorId });
 
-      // 3. Block if limit is reached
+      // ✅ THE KEY FIX: >= means "already AT the limit, don't allow one more"
+      // free limit = 2: blocked when count is already 2 (has used both slots)
       if (existingCount >= limit) {
         return res.status(403).send({
           success: false,
           message: "LIMIT_REACHED",
-          details: `Your ${plan} plan allows a maximum of ${limit} recipes. Please upgrade to add more.`
+          details: `Your ${plan} plan allows a maximum of ${limit} recipes. Please upgrade.`,
         });
       }
 
-      // 4. Insert recipe (strip out userPlan — it's not recipe data)
+      // Insert recipe (userPlan is stripped — it's not recipe data)
       const result = await recipeCollection.insertOne({
         ...recipeData,
         createdAt: new Date(),
@@ -193,3 +203,4 @@ run().catch(console.dir);
 app.listen(port, () => {
   console.log(`Example app listening on port ${port}`);
 });
+
