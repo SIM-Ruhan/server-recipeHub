@@ -97,11 +97,12 @@ app.get('/', (req, res) => {
   res.send('Hello World!');
 });
 
+// ✅ Keys must match what gets stored in user.plan after payment
 const PLAN_LIMITS = {
-  free: 2,
-  starter: 10,
-  pro: 50,
-  master: Infinity,
+  free:           2,
+  seller_starter: 10,
+  seller_pro:     50,
+  seller_master:  Infinity,
 };
 
 const uri = process.env.MONGODB_URI;
@@ -118,8 +119,10 @@ async function run() {
   try {
     await client.connect();
 
-    const database = client.db("recipe");
-    const recipeCollection = database.collection("recipes");
+    const database          = client.db("recipe");
+    const recipeCollection  = database.collection("recipes");
+    const userCollection    = database.collection("user");
+    const subscriptionCollection = database.collection("subscriptions");
 
     // GET all recipes (with optional filters)
     app.get("/api/recipes", async (req, res) => {
@@ -142,11 +145,40 @@ async function run() {
     });
 
     // GET recipe count by authorId
-    // ⚠️ Must be defined BEFORE /api/recipes/:id to avoid "count" being treated as an ObjectId
+    // ⚠️ Must stay ABOVE /api/recipes/:id
     app.get("/api/recipes/count/:authorId", async (req, res) => {
       const { authorId } = req.params;
       const count = await recipeCollection.countDocuments({ authorId });
       res.send({ count });
+    });
+
+    // POST subscription — save sub + update user plan
+    app.post("/api/subscriptions", async (req, res) => {
+      const data = req.body;
+      // data.planId will be e.g. "seller_starter", "seller_pro", "seller_master"
+
+      // 1. Save subscription record
+      const subsInfo = {
+        ...data,
+        createdAt: new Date(),
+      };
+      await subscriptionCollection.insertOne(subsInfo);
+
+      // 2. ✅ Update user.plan to e.g. "seller_starter" — matches PLAN_LIMITS keys
+      const userFilter = { email: data.email };
+      const userUpdate = {
+        $set: {
+          plan:      data.planId,       // "seller_starter" / "seller_pro" / "seller_master"
+          updatedAt: new Date(),
+        },
+      };
+      const updateResult = await userCollection.updateOne(userFilter, userUpdate);
+
+      // ✅ Single res.send() — no double-send crash
+      res.send({
+        success:  true,
+        modified: updateResult.modifiedCount,
+      });
     });
 
     // POST create recipe — with plan limit enforcement
@@ -162,8 +194,11 @@ async function run() {
         });
       }
 
-      // Resolve plan safely — unknown plans fall back to free
-      const plan = (userPlan || "free").toLowerCase();
+      // ✅ Fetch the user's LIVE plan directly from DB — never trust the client
+      const userDoc = await userCollection.findOne({ _id: new ObjectId(authorId) });
+      const plan    = userDoc?.plan || "free";   // e.g. "seller_starter", "free"
+
+      // ✅ Lookup limit — PLAN_LIMITS keys now match DB values exactly
       const limit = Object.prototype.hasOwnProperty.call(PLAN_LIMITS, plan)
         ? PLAN_LIMITS[plan]
         : PLAN_LIMITS["free"];
@@ -171,17 +206,17 @@ async function run() {
       // Count existing recipes for this user
       const existingCount = await recipeCollection.countDocuments({ authorId });
 
-      // ✅ THE KEY FIX: >= means "already AT the limit, don't allow one more"
-      // free limit = 2: blocked when count is already 2 (has used both slots)
+      console.log(`User: ${authorId} | Plan: ${plan} | Limit: ${limit} | Count: ${existingCount}`);
+
       if (existingCount >= limit) {
         return res.status(403).send({
           success: false,
           message: "LIMIT_REACHED",
-          details: `Your ${plan} plan allows a maximum of ${limit} recipes. Please upgrade.`,
+          details: `Your ${plan} plan allows a maximum of ${limit === Infinity ? "unlimited" : limit} recipes. Please upgrade.`,
         });
       }
 
-      // Insert recipe (userPlan is stripped — it's not recipe data)
+      // Insert recipe
       const result = await recipeCollection.insertOne({
         ...recipeData,
         createdAt: new Date(),
@@ -203,4 +238,3 @@ run().catch(console.dir);
 app.listen(port, () => {
   console.log(`Example app listening on port ${port}`);
 });
-
