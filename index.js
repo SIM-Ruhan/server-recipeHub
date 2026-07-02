@@ -89,7 +89,10 @@ const port = 8000;
 require("dotenv").config();
 
 app.use(cors({
-  origin: 'https://recipe-hub-client-orcin.vercel.app', // Allow only your frontend
+  origin: [
+    'https://recipe-hub-client-orcin.vercel.app',
+    'http://localhost:3000'
+  ],
   credentials: true
 }));
 app.use(express.json());
