@@ -136,7 +136,6 @@ async function run() {
       if (req.query.companyId) query.companyId = req.query.companyId;
       if (req.query.status)    query.status    = req.query.status;
       if (req.query.authorId)  query.authorId  = req.query.authorId;
-
       const cursor = recipeCollection.find(query);
       const result = await cursor.toArray();
       res.send(result);
