@@ -142,6 +142,105 @@ async function run() {
       res.send(result);
     });
 
+    //get the users
+    // GET all users
+app.get("/api/users", async (req, res) => {
+  try {
+    const users = await userCollection.find({}).toArray();
+
+    res.send(users);
+  } catch (err) {
+    console.error(err);
+
+    res.status(500).send({
+      success: false,
+      message: err.message,
+    });
+  }
+});
+
+//block/unblock users
+
+app.patch("/api/users/:id/toggle-block", async (req, res) => {
+  try {
+    const userId = req.params.id;
+    const { isBlocked } = req.body; // Expecting boolean from client
+
+    if (!ObjectId.isValid(userId)) {
+      return res.status(400).send({ success: false, message: "Invalid User ID format" });
+    }
+
+    const result = await database.collection("user").updateOne(
+      { _id: new ObjectId(userId) },
+      { 
+        $set: { 
+          isBlocked: isBlocked,
+          updatedAt: new Date()
+        } 
+      }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).send({ success: false, message: "User not found" });
+    }
+
+    res.send({ success: true, modifiedCount: result.modifiedCount });
+  } catch (error) {
+    console.error("Error toggling block state:", error);
+    res.status(500).send({ success: false, message: "Internal Server Error" });
+  }
+});
+
+// Feature status
+// PATCH - Toggle recipe feature status
+    app.patch("/api/recipes/:id/feature", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { isFeatured } = req.body;
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).send({ success: false, message: "Invalid Recipe ID" });
+        }
+
+        const result = await recipeCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { 
+            $set: { 
+              isFeatured: isFeatured,
+              updatedAt: new Date()
+            } 
+          }
+        );
+
+        res.send({ success: true, modifiedCount: result.modifiedCount });
+      } catch (error) {
+        console.error("Error toggling feature state:", error);
+        res.status(500).send({ success: false, message: "Internal Server Error" });
+      }
+    });
+
+    // DELETE - Delete a recipe permanently
+    app.delete("/api/recipes/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).send({ success: false, message: "Invalid Recipe ID" });
+        }
+
+        const result = await recipeCollection.deleteOne({ _id: new ObjectId(id) });
+
+        if (result.deletedCount === 0) {
+          return res.status(404).send({ success: false, message: "Recipe not found" });
+        }
+
+        res.send({ success: true, deletedCount: result.deletedCount });
+      } catch (error) {
+        console.error("Error deleting recipe:", error);
+        res.status(500).send({ success: false, message: "Internal Server Error" });
+      }
+    });
+
     // GET single recipe by ID
     app.get("/api/recipes/:id", async (req, res) => {
       const id = req.params.id;
