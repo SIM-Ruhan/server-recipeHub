@@ -129,7 +129,10 @@ async function run() {
     const recipeCollection  = database.collection("recipes");
     const userCollection    = database.collection("user");
     const subscriptionCollection = database.collection("subscriptions");
-
+ const reportCollection = database.collection("reports");
+    const favoriteCollection = database.collection("favorites");
+    const likesCollection = database.collection("likes");
+const purchaseCollection = database.collection("purchases");
     // GET all recipes (with optional filters)
     app.get("/api/recipes", async (req, res) => {
       const query = {};
@@ -240,6 +243,186 @@ app.patch("/api/users/:id/toggle-block", async (req, res) => {
       }
     });
 
+
+    // 1. PATCH - Like/Unlike Recipe (now tracks per-user state)
+app.patch("/api/recipes/:id/like", async (req, res) => {
+  try {
+    const recipeId = req.params.id;
+    const { userId, isLiked } = req.body;
+
+    if (!ObjectId.isValid(recipeId)) {
+      return res.status(400).send({ success: false, message: "Invalid Recipe ID" });
+    }
+
+    if (isLiked) {
+      // Add like record (avoid duplicates)
+      await likesCollection.updateOne(
+        { userId, recipeId },
+        { $setOnInsert: { userId, recipeId, createdAt: new Date() } },
+        { upsert: true }
+      );
+    } else {
+      await likesCollection.deleteOne({ userId, recipeId });
+    }
+
+    const result = await recipeCollection.updateOne(
+      { _id: new ObjectId(recipeId) },
+      { $inc: { likesCount: isLiked ? 1 : -1 } }
+    );
+
+    res.send({ success: true, modifiedCount: result.modifiedCount });
+  } catch (error) {
+    console.error("Error updating likes:", error);
+    res.status(500).send({ success: false, message: "Internal Server Error" });
+  }
+});
+
+// GET - check like/favorite status for a user on a recipe (for initial page load)
+app.get("/api/recipes/:id/status", async (req, res) => {
+  try {
+    const recipeId = req.params.id;
+    const { userId } = req.query;
+
+    const [liked, favorited] = await Promise.all([
+      likesCollection.findOne({ userId, recipeId }),
+      favoriteCollection.findOne({ userId, recipeId }),
+    ]);
+
+    res.send({ isLiked: !!liked, isSaved: !!favorited });
+  } catch (error) {
+    res.status(500).send({ success: false, message: "Internal Server Error" });
+  }
+});
+
+// GET - user's liked recipes (for dashboard)
+app.get("/api/users/:userId/liked-recipes", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const likes = await likesCollection.find({ userId }).toArray();
+    const recipeIds = likes.map(l => new ObjectId(l.recipeId));
+    const recipes = await recipeCollection.find({ _id: { $in: recipeIds } }).toArray();
+    res.send({ success: true, recipes });
+  } catch (error) {
+    res.status(500).send({ success: false, message: "Internal Server Error" });
+  }
+});
+
+// GET - user's favorite recipes (for dashboard)
+app.get("/api/users/:userId/favorites", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const favs = await favoriteCollection.find({ userId }).toArray();
+    const recipeIds = favs.map(f => new ObjectId(f.recipeId));
+    const recipes = await recipeCollection.find({ _id: { $in: recipeIds } }).toArray();
+    res.send({ success: true, recipes });
+  } catch (error) {
+    res.status(500).send({ success: false, message: "Internal Server Error" });
+  }
+});
+
+// GET - user's purchases (for dashboard table)
+app.get("/api/users/:userId/purchases", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const purchases = await purchaseCollection.find({ userId }).sort({ createdAt: -1 }).toArray();
+    res.send({ success: true, purchases });
+  } catch (error) {
+    res.status(500).send({ success: false, message: "Internal Server Error" });
+  }
+});
+
+// -----------------------------------------
+   // ─────────────────────────────────────────────────────────────────────────────
+// ADD THIS ROUTE TO YOUR BACKEND (server.js / index.js)
+// It joins the favorites collection with the recipes collection so the
+// frontend gets full recipe objects (name, image, etc.) — not just IDs.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET  /api/users/:userId/favorites
+// Returns: { success: true, recipes: [ ...full recipe objects ] }
+app.get("/api/users/:userId/favorites", async (req, res) => {
+    try {
+        const { userId } = req.params;
+
+        // 1. Find all favorite records for this user
+        const favoriteRecords = await favoriteCollection
+            .find({ userId })
+            .sort({ createdAt: -1 })
+            .toArray();
+
+        if (favoriteRecords.length === 0) {
+            return res.send({ success: true, recipes: [] });
+        }
+
+        // 2. Collect the recipe ObjectIds
+        const recipeObjectIds = favoriteRecords
+            .map(f => {
+                try { return new ObjectId(f.recipeId); }
+                catch { return null; }
+            })
+            .filter(Boolean);
+
+        // 3. Fetch the full recipe documents in one query
+        const recipes = await recipeCollection
+            .find({ _id: { $in: recipeObjectIds } })
+            .toArray();
+
+        // 4. Preserve the "most-recently-saved first" ordering
+        const recipeMap = Object.fromEntries(recipes.map(r => [r._id.toString(), r]));
+        const orderedRecipes = favoriteRecords
+            .map(f => recipeMap[f.recipeId])
+            .filter(Boolean);
+
+        res.send({ success: true, recipes: orderedRecipes });
+    } catch (error) {
+        console.error("Error fetching favorites:", error);
+        res.status(500).send({ success: false, message: "Internal Server Error" });
+    }
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// YOU ALREADY HAVE THIS — just confirming the signature matches what the
+// FavoritesPage DELETE call expects:
+//   DELETE /api/users/:userId/favorites/:recipeId
+// ─────────────────────────────────────────────────────────────────────────────
+
+app.delete("/api/users/:userId/favorites/:recipeId", async (req, res) => {
+    try {
+        const { userId, recipeId } = req.params;
+        const result = await favoriteCollection.deleteOne({ userId, recipeId });
+        res.send({ success: true, deletedCount: result.deletedCount });
+    } catch (error) {
+        console.error("Error deleting favorite:", error);
+        res.status(500).send({ success: false, message: "Internal Server Error" });
+    }
+});
+//end here
+// GET - admin: all reports
+app.get("/api/admin/reports", async (req, res) => {
+  try {
+    const reports = await reportCollection.find({}).sort({ createdAt: -1 }).toArray();
+    res.send({ success: true, reports });
+  } catch (error) {
+    res.status(500).send({ success: false, message: "Internal Server Error" });
+  }
+});
+
+// PATCH - admin: update report status
+app.patch("/api/admin/reports/:id", async (req, res) => {
+  try {
+    const { status } = req.body; // "resolved" | "dismissed"
+    await reportCollection.updateOne(
+      { _id: new ObjectId(req.params.id) },
+      { $set: { status } }
+    );
+    res.send({ success: true });
+  } catch (error) {
+    res.status(500).send({ success: false, message: "Internal Server Error" });
+  }
+});
+   
+//end here
     // GET single recipe by ID
     app.get("/api/recipes/:id", async (req, res) => {
       const id = req.params.id;
