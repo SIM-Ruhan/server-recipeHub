@@ -277,6 +277,49 @@ app.patch("/api/recipes/:id/like", async (req, res) => {
   }
 });
 
+//start here
+app.patch("/api/recipes/:id/favorite", async (req, res) => {
+  try {
+    const recipeId = req.params.id;
+    const { userId, isSaved } = req.body;
+
+    if (!ObjectId.isValid(recipeId)) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid Recipe ID",
+      });
+    }
+
+    if (isSaved) {
+      await favoriteCollection.updateOne(
+        { userId, recipeId },
+        {
+          $setOnInsert: {
+            userId,
+            recipeId,
+            createdAt: new Date(),
+          },
+        },
+        { upsert: true }
+      );
+    } else {
+      await favoriteCollection.deleteOne({
+        userId,
+        recipeId,
+      });
+    }
+
+    res.send({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({
+      success: false,
+      message: "Internal Server Error",
+    });
+  }
+});
+//end here
+
 // GET - check like/favorite status for a user on a recipe (for initial page load)
 app.get("/api/recipes/:id/status", async (req, res) => {
   try {
@@ -480,6 +523,8 @@ app.patch("/api/admin/reports/:id", async (req, res) => {
           message: "You must be logged in to create a recipe.",
         });
       }
+
+
 
       // ✅ Fetch the user's LIVE plan directly from DB — never trust the client
       const userDoc = await userCollection.findOne({ _id: new ObjectId(authorId) });
