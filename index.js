@@ -161,6 +161,10 @@ app.get("/api/users", async (req, res) => {
   }
 });
 
+//Start here
+
+//end here
+
 //block/unblock users
 
 app.patch("/api/users/:id/toggle-block", async (req, res) => {
@@ -367,22 +371,15 @@ app.get("/api/users/:userId/favorites", async (req, res) => {
 app.get("/api/users/:userId/purchases", async (req, res) => {
   try {
     const { userId } = req.params;
-    const purchases = await purchaseCollection.find({ userId }).sort({ createdAt: -1 }).toArray();
-    res.send({ success: true, purchases });
+    const par = await purchaseCollection.find({ userId }).toArray();
+    const recipeIds = par.map(f => new ObjectId(f.recipeId));
+    const recipes = await recipeCollection.find({ _id: { $in: recipeIds } }).toArray();
+    res.send({ success: true, recipes });
   } catch (error) {
     res.status(500).send({ success: false, message: "Internal Server Error" });
   }
 });
-
-// -----------------------------------------
-   // ─────────────────────────────────────────────────────────────────────────────
-// ADD THIS ROUTE TO YOUR BACKEND (server.js / index.js)
-// It joins the favorites collection with the recipes collection so the
-// frontend gets full recipe objects (name, image, etc.) — not just IDs.
-// ─────────────────────────────────────────────────────────────────────────────
-
-// GET  /api/users/:userId/favorites
-// Returns: { success: true, recipes: [ ...full recipe objects ] }
+//end here
 app.get("/api/users/:userId/favorites", async (req, res) => {
     try {
         const { userId } = req.params;
@@ -424,11 +421,6 @@ app.get("/api/users/:userId/favorites", async (req, res) => {
 });
 
 
-// ─────────────────────────────────────────────────────────────────────────────
-// YOU ALREADY HAVE THIS — just confirming the signature matches what the
-// FavoritesPage DELETE call expects:
-//   DELETE /api/users/:userId/favorites/:recipeId
-// ─────────────────────────────────────────────────────────────────────────────
 
 app.delete("/api/users/:userId/favorites/:recipeId", async (req, res) => {
     try {
