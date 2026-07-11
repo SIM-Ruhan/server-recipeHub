@@ -146,6 +146,41 @@ async function run() {
       res.send(result);
     });
 
+    //start 
+// GET - aggregated stats for a seller (favorites + engagement across all their recipes)
+app.get("/api/recipes/stats/:authorId", async (req, res) => {
+  try {
+    const { authorId } = req.params;
+
+    // Pull all of this seller's recipes (not just active) to sum likes
+    const recipes = await recipeCollection
+      .find({ authorId })
+      .project({ _id: 1, likesCount: 1 })
+      .toArray();
+
+    const recipeIds = recipes.map((r) => r._id.toString());
+    const totalLikes = recipes.reduce((sum, r) => sum + (r.likesCount || 0), 0);
+
+    const totalFavorites = recipeIds.length
+      ? await favoriteCollection.countDocuments({ recipeId: { $in: recipeIds } })
+      : 0;
+
+    const totalEngagement = totalLikes + totalFavorites;
+
+    res.send({
+      success: true,
+      totalRecipes: recipes.length,
+      totalLikes,
+      totalFavorites,
+      totalEngagement,
+    });
+  } catch (error) {
+    console.error("Error fetching seller stats:", error);
+    res.status(500).send({ success: false, message: "Internal Server Error" });
+  }
+});
+    //end
+
     //get the users
     // GET all users
 app.get("/api/users", async (req, res) => {
