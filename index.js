@@ -132,7 +132,9 @@ async function run() {
  const reportCollection = database.collection("reports");
     const favoriteCollection = database.collection("favorites");
     const likesCollection = database.collection("likes");
-const purchaseCollection = database.collection("purchases");
+    const purchaseCollection = database.collection("purchases");
+
+
     // GET all recipes (with optional filters)
     app.get("/api/recipes", async (req, res) => {
       const query = {};
@@ -162,7 +164,98 @@ app.get("/api/users", async (req, res) => {
 });
 
 //Start here
+// Purchase a recipe
+app.post("/api/purchases", async (req, res) => {
+  try {
+    const {
+      recipeId,
+      userId,
+      price
+    } = req.body;
 
+    if (!recipeId || !userId) {
+      return res.status(400).send({
+        success: false,
+        message: "Missing recipeId or userId"
+      });
+    }
+
+    // Prevent duplicate purchases
+    const alreadyPurchased = await purchaseCollection.findOne({
+      recipeId,
+      userId
+    });
+
+    if (alreadyPurchased) {
+      return res.send({
+        success: true,
+        alreadyPurchased: true
+      });
+    }
+
+    const recipe = await recipeCollection.findOne({
+      _id: new ObjectId(recipeId)
+    });
+
+    if (!recipe) {
+      return res.status(404).send({
+        success: false,
+        message: "Recipe not found"
+      });
+    }
+
+    const purchase = {
+      recipeId,
+      userId,
+
+      recipeName: recipe.recipeName,
+      recipeImage: recipe.image,
+      authorName: recipe.authorName,
+      price: recipe.price || price,
+
+      purchasedAt: new Date()
+    };
+
+    await purchaseCollection.insertOne(purchase);
+
+    res.send({
+      success: true
+    });
+
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).send({
+      success: false
+    });
+  }
+});
+
+app.get("/api/users/:userId/purchases", async (req, res) => {
+
+  try {
+
+    const { userId } = req.params;
+
+    const purchases = await purchaseCollection
+      .find({ userId })
+      .sort({ purchasedAt: -1 })
+      .toArray();
+
+    res.send({
+      success: true,
+      purchases
+    });
+
+  } catch (err) {
+
+    res.status(500).send({
+      success: false
+    });
+
+  }
+
+});
 //end here
 
 //block/unblock users
@@ -224,6 +317,33 @@ app.patch("/api/users/:id/toggle-block", async (req, res) => {
         res.status(500).send({ success: false, message: "Internal Server Error" });
       }
     });
+    // PATCH - Update a recipe (edit)
+app.patch("/api/recipes/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({ success: false, message: "Invalid Recipe ID" });
+    }
+
+    const updateData = { ...req.body, updatedAt: new Date() };
+    delete updateData._id; // never let client overwrite _id
+
+    const result = await recipeCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updateData }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).send({ success: false, message: "Recipe not found" });
+    }
+
+    res.send({ success: true, modifiedCount: result.modifiedCount });
+  } catch (error) {
+    console.error("Error updating recipe:", error);
+    res.status(500).send({ success: false, message: "Internal Server Error" });
+  }
+});
 
     // DELETE - Delete a recipe permanently
     app.delete("/api/recipes/:id", async (req, res) => {
@@ -367,19 +487,7 @@ app.get("/api/users/:userId/favorites", async (req, res) => {
   }
 });
 
-// GET - user's purchases (for dashboard table)
-app.get("/api/users/:userId/purchases", async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const par = await purchaseCollection.find({ userId }).toArray();
-    const recipeIds = par.map(f => new ObjectId(f.recipeId));
-    const recipes = await recipeCollection.find({ _id: { $in: recipeIds } }).toArray();
-    res.send({ success: true, recipes });
-  } catch (error) {
-    res.status(500).send({ success: false, message: "Internal Server Error" });
-  }
-});
-//end here
+
 app.get("/api/users/:userId/favorites", async (req, res) => {
     try {
         const { userId } = req.params;
