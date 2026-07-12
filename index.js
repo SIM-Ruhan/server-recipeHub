@@ -129,10 +129,10 @@ async function run() {
     const recipeCollection  = database.collection("recipes");
     const userCollection    = database.collection("user");
     const subscriptionCollection = database.collection("subscriptions");
- const reportCollection = database.collection("reports");
     const favoriteCollection = database.collection("favorites");
     const likesCollection = database.collection("likes");
     const purchaseCollection = database.collection("purchases");
+    const reportCollection = database.collection("reports");
 
 
     // GET all recipes (with optional filters)
@@ -576,26 +576,116 @@ app.delete("/api/users/:userId/favorites/:recipeId", async (req, res) => {
     }
 });
 //end here
-// GET - admin: all reports
+// GET - admin: reports, optionally filtered by status (pending | dismissed | removed | all)
 app.get("/api/admin/reports", async (req, res) => {
   try {
-    const reports = await reportCollection.find({}).sort({ createdAt: -1 }).toArray();
+    const { status } = req.query;
+    const query = {};
+    if (status && status !== "all") {
+      query.status = status;
+    }
+    const reports = await reportCollection.find(query).sort({ createdAt: -1 }).toArray();
     res.send({ success: true, reports });
   } catch (error) {
+    console.error("Error fetching reports:", error);
     res.status(500).send({ success: false, message: "Internal Server Error" });
   }
 });
 
-// PATCH - admin: update report status
-app.patch("/api/admin/reports/:id", async (req, res) => {
+// POST - user submits a report on a recipe
+app.post("/api/reports", async (req, res) => {
   try {
-    const { status } = req.body; // "resolved" | "dismissed"
-    await reportCollection.updateOne(
-      { _id: new ObjectId(req.params.id) },
-      { $set: { status } }
+    const { recipeId, reportedBy, reason, description } = req.body;
+
+    if (!recipeId || !reportedBy || !reason) {
+      return res.status(400).send({
+        success: false,
+        message: "Missing recipeId, reportedBy, or reason",
+      });
+    }
+
+    // Denormalize a few fields at write-time so the admin table
+    // doesn't need extra joins/lookups later
+    const [recipe, reporter] = await Promise.all([
+      ObjectId.isValid(recipeId)
+        ? recipeCollection.findOne({ _id: new ObjectId(recipeId) })
+        : null,
+      ObjectId.isValid(reportedBy)
+        ? userCollection.findOne({ _id: new ObjectId(reportedBy) })
+        : null,
+    ]);
+
+    const report = {
+      recipeId,
+      recipeName: recipe?.recipeName || null,
+      reportedBy,
+      reporterEmail: reporter?.email || null,
+      reason,
+      description: description || null,
+      status: "pending",
+      createdAt: new Date(),
+    };
+
+    const result = await reportCollection.insertOne(report);
+
+    res.send({ success: true, insertedId: result.insertedId });
+  } catch (error) {
+    console.error("Error creating report:", error);
+    res.status(500).send({ success: false, message: "Internal Server Error" });
+  }
+});
+// PATCH - admin: dismiss a single report (recipe stays untouched)
+app.patch("/api/admin/reports/:id/dismiss", async (req, res) => {
+  try {
+    const id = req.params.id;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({ success: false, message: "Invalid Report ID" });
+    }
+
+    const result = await reportCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status: "dismissed", resolvedAt: new Date() } }
     );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).send({ success: false, message: "Report not found" });
+    }
+
     res.send({ success: true });
   } catch (error) {
+    console.error("Error dismissing report:", error);
+    res.status(500).send({ success: false, message: "Internal Server Error" });
+  }
+});
+
+// PATCH - admin: remove the reported recipe + resolve every report tied to it
+app.patch("/api/admin/reports/:id/remove-recipe", async (req, res) => {
+  try {
+    const id = req.params.id;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({ success: false, message: "Invalid Report ID" });
+    }
+
+    const report = await reportCollection.findOne({ _id: new ObjectId(id) });
+    if (!report) {
+      return res.status(404).send({ success: false, message: "Report not found" });
+    }
+
+    const { recipeId } = report;
+
+    if (recipeId && ObjectId.isValid(recipeId)) {
+      await recipeCollection.deleteOne({ _id: new ObjectId(recipeId) });
+    }
+
+    // Resolve this report AND any other pending reports pointing at the same recipe
+    await reportCollection.updateMany(
+      { recipeId },
+      { $set: { status: "removed", resolvedAt: new Date() } }
+    );
+
+    res.send({ success: true });
+  } catch (error) {
+    console.error("Error removing reported recipe:", error);
     res.status(500).send({ success: false, message: "Internal Server Error" });
   }
 });
