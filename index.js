@@ -563,6 +563,32 @@ app.get("/api/users/:userId/favorites", async (req, res) => {
     }
 });
 
+//start
+// GET - admin: platform-wide overview stats
+app.get("/api/admin/stats", async (req, res) => {
+  try {
+    const [totalUsers, totalRecipes, premiumMembers, pendingReports] = await Promise.all([
+      userCollection.countDocuments({}),
+      recipeCollection.countDocuments({}),
+      userCollection.countDocuments({
+        plan: { $in: ["seller_starter", "seller_pro", "seller_master"] },
+      }),
+      reportCollection.countDocuments({ status: "pending" }),
+    ]);
+
+    res.send({
+      success: true,
+      totalUsers,
+      totalRecipes,
+      premiumMembers,
+      pendingReports,
+    });
+  } catch (error) {
+    console.error("Error fetching admin stats:", error);
+    res.status(500).send({ success: false, message: "Internal Server Error" });
+  }
+});
+//end
 
 
 app.delete("/api/users/:userId/favorites/:recipeId", async (req, res) => {
@@ -634,6 +660,8 @@ app.post("/api/reports", async (req, res) => {
     res.status(500).send({ success: false, message: "Internal Server Error" });
   }
 });
+
+
 // PATCH - admin: dismiss a single report (recipe stays untouched)
 app.patch("/api/admin/reports/:id/dismiss", async (req, res) => {
   try {
