@@ -1,86 +1,3 @@
-// const express = require('express');
-// const cors = require("cors");
-// const app = express()
-// const port = 8000
-// require("dotenv").config()
-// app.use(cors());
-// app.use(express.json());
-
-// const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
-// app.get('/', (req, res) => {
-//   res.send('Hello World!')
-// })
-
-// //Mongodb Start
-// const uri = process.env.MONGODB_URI;
-
-// // Create a MongoClient with a MongoClientOptions object to set the Stable API version
-// const client = new MongoClient(uri, {
-//   serverApi: {
-//     version: ServerApiVersion.v1,
-//     strict: true,
-//     deprecationErrors: true,
-//   }
-// });
-
-// async function run() {
-//   try {
-//     // Connect the client to the server	(optional starting in v4.7)
-//     await client.connect();
-//     // Send a ping to confirm a successful connection
-// const database = client.db("recipe");
-// const recipeCollection = database.collection("recipes");
-
-
-
-
-// app.get("/api/recipes", async (req,res)=> {
-// const query = {};
-
-// if(req.query.companyId){
-//     query.companyId = req.query.companyId;
-// }
-// if(req.query.status){
-//     query.status = req.query.status;
-// }
-// const cursor = recipeCollection.find(query);
-// const result = await cursor.toArray();
-// res.send(result);
-// })
-
-// app.get("/api/recipes/:id", async (req,res) => {
-//     const id = req.params.id;
-//     const query = {
-//         _id: new ObjectId(id)
-//     }
-//     const result = await recipeCollection.findOne(query);
-//     res.send(result);
-// })
-
-// app.post("/api/recipes", async (req,res)=> {
-//     const recipe = req.body;
-//     const result = await recipeCollection.insertOne(recipe);
-//     res.send(result);
-// })
-
-
-
-//     await client.db("admin").command({ ping: 1 });
-//     console.log("Pinged your deployment. You successfully connected to MongoDB!");
-//   } finally {
-//     // Ensures that the client will close when you finish/error
-    
-//   }
-// }
-// run().catch(console.dir);
-
-// //Mongodb end
-
-// app.listen(port, () => {
-//   console.log(`Example app listening on port ${port}`)
-// })
-
-//-------------------------------------------------------------------------------------------
 
 const express = require('express');
 const cors = require("cors");
@@ -103,7 +20,7 @@ app.get('/', (req, res) => {
   res.send('Hello World!');
 });
 
-// ✅ Keys must match what gets stored in user.plan after payment
+// Keys must match what gets stored in user.plan after payment
 const PLAN_LIMITS = {
   free:           2,
   seller_starter: 10,
@@ -136,15 +53,36 @@ async function run() {
 
 
     // GET all recipes (with optional filters)
-    app.get("/api/recipes", async (req, res) => {
-      const query = {};
-      if (req.query.companyId) query.companyId = req.query.companyId;
-      if (req.query.status)    query.status    = req.query.status;
-      if (req.query.authorId)  query.authorId  = req.query.authorId;
-      const cursor = recipeCollection.find(query);
-      const result = await cursor.toArray();
-      res.send(result);
-    });
+ app.get("/api/recipes", async (req, res) => {
+  const query = {};
+  
+  if (req.query.companyId) query.companyId = req.query.companyId;
+  if (req.query.status)    query.status    = req.query.status;
+  if (req.query.authorId)  query.authorId  = req.query.authorId;
+
+  // NEW: Handle search by recipe name (case-insensitive)
+  if (req.query.search) {
+    query.recipeName = { $regex: req.query.search, $options: "i" };
+  }
+
+  // NEW: Handle category filter
+  if (req.query.category && req.query.category !== "All") {
+    query.category = req.query.category;
+  }
+
+  const { page = 1, limit = 12 } = req.query;
+  const skip = (Number(page) - 1) * Number(limit);
+
+  const totalRecipes = await recipeCollection.countDocuments(query);
+  const cursor = recipeCollection.find(query).skip(skip).limit(Number(limit));
+  const result = await cursor.toArray();
+
+  res.send({
+    recipes: result,
+    totalPages: Math.ceil(totalRecipes / Number(limit)),
+    currentPage: Number(page)
+  });
+});
 
     //start 
 // GET - aggregated stats for a seller (favorites + engagement across all their recipes)
