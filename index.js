@@ -136,71 +136,89 @@ app.get("/api/users", async (req, res) => {
   }
 });
 
-//Start here
-// Purchase a recipe
+//start
+app.get("/api/admin/transactions", async (req, res) => {
+  try {
+    const [purchases, subscriptions] = await Promise.all([
+      purchaseCollection.find({}).toArray(),
+      subscriptionCollection.find({}).toArray(),
+    ]);
+
+    const purchaseTx = purchases.map((p) => ({
+      id: p._id.toString(),
+      user: p.userEmail || "ruhan@gmail.com",
+      type: "Recipe",
+      amount: p.price ?? 0,
+      status: "paid",
+      transactionId: p.stripeSessionId || p._id.toString(),
+      date: p.purchasedAt || p._id.getTimestamp(),
+    }));
+
+    const subscriptionTx = subscriptions.map((s) => ({
+      id: s._id.toString(),
+      user: s.email || "—",
+      type: "Premium",
+      amount: s.price ?? 0,
+      status: s.status || "paid",
+      transactionId: s.stripeSessionId || s._id.toString(),
+      date: s.createdAt || s._id.getTimestamp(),
+    }));
+
+    const combined = [...purchaseTx, ...subscriptionTx].sort(
+      (a, b) => new Date(b.date) - new Date(a.date)
+    );
+
+    res.send({ success: true, transactions: combined });
+  } catch (error) {
+    console.error("Error fetching transactions:", error);
+    res.status(500).send({ success: false, message: "Internal Server Error" });
+  }
+});
+//end
+
+// POST - confirm a Stripe payment and record purchase history (idempotent)
 app.post("/api/purchases", async (req, res) => {
   try {
-    const {
-      recipeId,
-      userId,
-      price
-    } = req.body;
+    const { sessionId, recipeId, userId, userEmail, price, title } = req.body;
 
-    if (!recipeId || !userId) {
+    if (!sessionId || !recipeId) {
       return res.status(400).send({
         success: false,
-        message: "Missing recipeId or userId"
+        message: "Missing sessionId or recipeId",
       });
     }
 
-    // Prevent duplicate purchases
-    const alreadyPurchased = await purchaseCollection.findOne({
-      recipeId,
-      userId
-    });
-
-    if (alreadyPurchased) {
-      return res.send({
-        success: true,
-        alreadyPurchased: true
-      });
+    // Prevent duplicate inserts if the success page is revisited/refreshed
+    const existing = await purchaseCollection.findOne({ stripeSessionId: sessionId });
+    if (existing) {
+      return res.send({ success: true, alreadyRecorded: true, purchase: existing });
     }
 
-    const recipe = await recipeCollection.findOne({
-      _id: new ObjectId(recipeId)
-    });
-
-    if (!recipe) {
-      return res.status(404).send({
-        success: false,
-        message: "Recipe not found"
-      });
+    let recipe = null;
+    if (ObjectId.isValid(recipeId)) {
+      recipe = await recipeCollection.findOne({ _id: new ObjectId(recipeId) });
     }
 
     const purchase = {
+      stripeSessionId: sessionId,
       recipeId,
-      userId,
+      userId: userId || null,
+      userEmail: userEmail || null,
 
-      recipeName: recipe.recipeName,
-      recipeImage: recipe.image,
-      authorName: recipe.authorName,
-      price: recipe.price || price,
+      recipeName: recipe?.recipeName || title || null,
+      recipeImage: recipe?.image || null,
+      authorName: recipe?.authorName || null,
+      price: Number(price) || recipe?.price || 0,
 
-      purchasedAt: new Date()
+      purchasedAt: new Date(),
     };
 
-    await purchaseCollection.insertOne(purchase);
+    const result = await purchaseCollection.insertOne(purchase);
 
-    res.send({
-      success: true
-    });
-
-  } catch (err) {
-    console.log(err);
-
-    res.status(500).send({
-      success: false
-    });
+    res.send({ success: true, insertedId: result.insertedId, purchase });
+  } catch (error) {
+    console.error("Error confirming purchase:", error);
+    res.status(500).send({ success: false, message: "Internal Server Error" });
   }
 });
 
@@ -673,34 +691,47 @@ app.patch("/api/admin/reports/:id/remove-recipe", async (req, res) => {
       res.send({ count });
     });
 
-    // POST subscription — save sub + update user plan
     app.post("/api/subscriptions", async (req, res) => {
-      const data = req.body;
-      // data.planId will be e.g. "seller_starter", "seller_pro", "seller_master"
+  try {
+    const data = req.body;
 
-      // 1. Save subscription record
-      const subsInfo = {
-        ...data,
-        createdAt: new Date(),
-      };
-      await subscriptionCollection.insertOne(subsInfo);
-
-      // 2. ✅ Update user.plan to e.g. "seller_starter" — matches PLAN_LIMITS keys
-      const userFilter = { email: data.email };
-      const userUpdate = {
-        $set: {
-          plan:      data.planId,       // "seller_starter" / "seller_pro" / "seller_master"
-          updatedAt: new Date(),
-        },
-      };
-      const updateResult = await userCollection.updateOne(userFilter, userUpdate);
-
-      // ✅ Single res.send() — no double-send crash
-      res.send({
-        success:  true,
-        modified: updateResult.modifiedCount,
+    // Prevent duplicate inserts if the success page is revisited/refreshed
+    if (data.stripeSessionId) {
+      const existing = await subscriptionCollection.findOne({
+        stripeSessionId: data.stripeSessionId,
       });
+      if (existing) {
+        return res.send({ success: true, alreadyRecorded: true, subscription: existing });
+      }
+    }
+
+    // 1. Save subscription record
+    const subsInfo = {
+      ...data,
+      createdAt: new Date(),
+    };
+    const insertResult = await subscriptionCollection.insertOne(subsInfo);
+
+    // 2. Update user.plan to e.g. "seller_starter" — matches PLAN_LIMITS keys
+    const userFilter = { email: data.email };
+    const userUpdate = {
+      $set: {
+        plan: data.planId,
+        updatedAt: new Date(),
+      },
+    };
+    const updateResult = await userCollection.updateOne(userFilter, userUpdate);
+
+    res.send({
+      success: true,
+      insertedId: insertResult.insertedId,
+      modified: updateResult.modifiedCount,
     });
+  } catch (error) {
+    console.error("Error creating subscription:", error);
+    res.status(500).send({ success: false, message: "Internal Server Error" });
+  }
+});
 
     // POST create recipe — with plan limit enforcement
     app.post("/api/recipes", async (req, res) => {
