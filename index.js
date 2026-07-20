@@ -20,6 +20,19 @@ app.get('/', (req, res) => {
   res.send('Hello World!');
 });
 
+const logger = (req,res,next) => {
+  console.log("Logger middleware logged",req.params);
+  next();
+}
+
+const verifyToken = (req,res,next) => {
+  console.log("headers",req.headers)
+
+  next();
+}
+
+
+
 // Keys must match what gets stored in user.plan after payment
 const PLAN_LIMITS = {
   free:           2,
@@ -53,35 +66,37 @@ async function run() {
 
 
     // GET all recipes (with optional filters)
- app.get("/api/recipes", async (req, res) => {
-  const query = {};
-  
-  if (req.query.companyId) query.companyId = req.query.companyId;
-  if (req.query.status)    query.status    = req.query.status;
-  if (req.query.authorId)  query.authorId  = req.query.authorId;
+app.get("/api/recipes", async (req, res) => {
+  try {
+    const query = {};
+    if (req.query.companyId) query.companyId = req.query.companyId;
+    if (req.query.status)    query.status    = req.query.status;
+    if (req.query.authorId)  query.authorId  = req.query.authorId;
 
-  // NEW: Handle search by recipe name (case-insensitive)
-  if (req.query.search) {
-    query.recipeName = { $regex: req.query.search, $options: "i" };
+    if (req.query.search) {
+      query.recipeName = { $regex: req.query.search, $options: "i" };
+    }
+
+    if (req.query.category && req.query.category !== "All") {
+      query.category = req.query.category;
+    }
+
+    const { page = 1, limit = 12 } = req.query;
+    const skip = (Number(page) - 1) * Number(limit);
+
+    const totalRecipes = await recipeCollection.countDocuments(query);
+    const cursor = recipeCollection.find(query).skip(skip).limit(Number(limit));
+    const result = await cursor.toArray();
+
+    res.send({
+      recipes: result,
+      totalPages: Math.ceil(totalRecipes / Number(limit)),
+      currentPage: Number(page),
+    });
+  } catch (err) {
+    console.error("GET /api/recipes failed:", err);
+    res.status(500).json({ error: err.message });
   }
-
-  // NEW: Handle category filter
-  if (req.query.category && req.query.category !== "All") {
-    query.category = req.query.category;
-  }
-
-  const { page = 1, limit = 12 } = req.query;
-  const skip = (Number(page) - 1) * Number(limit);
-
-  const totalRecipes = await recipeCollection.countDocuments(query);
-  const cursor = recipeCollection.find(query).skip(skip).limit(Number(limit));
-  const result = await cursor.toArray();
-
-  res.send({
-    recipes: result,
-    totalPages: Math.ceil(totalRecipes / Number(limit)),
-    currentPage: Number(page)
-  });
 });
 
     //start 
@@ -585,9 +600,6 @@ app.post("/api/reports", async (req, res) => {
         message: "Missing recipeId, reportedBy, or reason",
       });
     }
-
-    // Denormalize a few fields at write-time so the admin table
-    // doesn't need extra joins/lookups later
     const [recipe, reporter] = await Promise.all([
       ObjectId.isValid(recipeId)
         ? recipeCollection.findOne({ _id: new ObjectId(recipeId) })
