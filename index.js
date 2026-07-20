@@ -61,9 +61,13 @@ const client = new MongoClient(uri, {
   }
 });
 
-async function run() {
-  try {
-    await client.connect();
+// async function run() {
+//   try {
+//     await client.connect();
+
+client.connect(() => {
+  console.log("connecting to mongoDB")
+}).catch(console.dir)
 
     const database          = client.db("recipe");
     const recipeCollection  = database.collection("recipes");
@@ -801,16 +805,18 @@ app.patch("/api/admin/reports/:id/remove-recipe", async (req, res) => {
       res.send({ success: true, insertedId: result.insertedId });
     });
 
-    // await client.db("admin").command({ ping: 1 });
-    console.log("Pinged your deployment. You successfully connected to MongoDB!");
+//     // await client.db("admin").command({ ping: 1 });
+//     console.log("Pinged your deployment. You successfully connected to MongoDB!");
 
-  } finally {
-    // keep connection open
-  }
-}
+//   } finally {
+//     // keep connection open
+//   }
+// }
 
-run().catch(console.dir);
+// run().catch(console.dir);
 
 app.listen(port, () => {
   console.log(`Example app listening on port ${port}`);
 });
+
+module.exports = app;
