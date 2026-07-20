@@ -28,6 +28,16 @@ const logger = (req,res,next) => {
 const verifyToken = (req,res,next) => {
   console.log("headers",req.headers)
 
+  const authHeader = req.headers?.authorization
+  if(!authHeader){
+    return res.status(401).send({message: "Unauthorized access"})
+  }
+
+  const token = authHeader.split(" ")[1]
+  if(!token){
+        return res.status(401).send({message: "Unauthorized access"})
+  }
+
   next();
 }
 
