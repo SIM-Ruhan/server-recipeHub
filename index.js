@@ -7,7 +7,7 @@ require("dotenv").config();
 
 app.use(cors({
   origin: [
-    'https://recipe-hub-client-orcin.vercel.app',
+    'https://recipe-hub-client-psi.vercel.app',
     'http://localhost:3000'
   ],
   credentials: true
